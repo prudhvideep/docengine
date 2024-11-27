@@ -147,7 +147,7 @@ func resetPromptTextFile(path string) error {
 	writer := bufio.NewWriter(file)
 	_, err = writer.WriteString("Generate comprehensive documentation in markdown format for the following project. The documentation should include:\n")
 	writer.WriteString("A Table of Contents that links to different modules of the project.\n")
-	writer.WriteString("An overview of each module with a brief description. Ignore this for various config files.\n")
+	writer.WriteString("An overview of each module with a brief description. Ignore this for various config files. Also the modules should be genric not always the filenames\n")
 	writer.WriteString("Give a broad overview regarding key functions, including their purpose, and examples of usage.\n")
 
 	if err != nil {
