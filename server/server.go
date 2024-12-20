@@ -1,8 +1,7 @@
 package server
 
 import (
-	"bytes"
-	"html/template"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/prudhvideep/docengine/util"
-	"github.com/yuin/goldmark"
 )
 
 var upgrader = websocket.Upgrader{
@@ -23,9 +21,11 @@ var upgrader = websocket.Upgrader{
 }
 
 func HandleDocGen(rw http.ResponseWriter, r *http.Request) {
+	fmt.Println("Received Request")
+
 	conn, err := upgrader.Upgrade(rw, r, nil)
 	if err != nil {
-		log.Println("Error upgrading the http connection")
+		fmt.Println("Error upgrading the http connection")
 		return
 	}
 
@@ -66,23 +66,32 @@ func HandleDocGen(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		geminiUrl := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=AIzaSyAKSSCovhrY5hp44vjWXIkYv-jmzddyYug"
+		geminiKey := os.Getenv("GEMINI_API_KEY")
+		if geminiKey == "" {
+			err = conn.WriteMessage(websocket.TextMessage, []byte("Key missing in the env"))
+			if err != nil {
+				log.Println("Error sending the message")
+				return
+			}
+		}
+
+		geminiUrl := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=%s", geminiKey)
 
 		err = conn.WriteMessage(websocket.TextMessage, []byte("Preparing the documentation"))
 		if err != nil {
 			log.Println("Error getting the summary")
 		}
 
-		util.PostPrompt(conn, repoName, geminiUrl, filepath.Join(wd, "prompt.txt"))
+		err = util.PostPrompt(conn, url, geminiUrl, filepath.Join(wd, "prompt.txt"))
+		if err != nil {
+			log.Println("Error sending the message", err)
+			return
+		}
 
 		err = conn.WriteMessage(websocket.TextMessage, []byte("Docs generated"))
 		if err != nil {
 			log.Println("Error sending the message")
-		}
-
-		err = conn.WriteMessage(websocket.TextMessage, []byte("Go to Url : "+"http://localhost:8080/docs?repo="+repoName+".md"))
-		if err != nil {
-			log.Println("Error sending the message")
+			return
 		}
 
 		conn.WriteMessage(websocket.TextMessage, []byte("Done"))
@@ -136,118 +145,6 @@ func cleanRepo(conn *websocket.Conn) {
 
 	if err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte("Error removing the files"))
-		return
-	}
-}
-
-func ServeFormattedDoc(w http.ResponseWriter, r *http.Request) {
-	repoName := r.URL.Query().Get("repo")
-	if repoName == "" {
-		http.Error(w, "Missing repo name", http.StatusBadRequest)
-		return
-	}
-
-	docPath := filepath.Join("./docs", repoName)
-
-	// Read the markdown file
-	content, err := os.ReadFile(docPath)
-	if err != nil {
-		http.Error(w, "Error reading file: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if len(content) == 0 {
-		http.Error(w, "Markdown file is empty", http.StatusInternalServerError)
-		return
-	}
-
-	var buf bytes.Buffer
-
-	// Convert markdown to HTML
-	err = goldmark.New().Convert(content, &buf)
-	if err != nil {
-		log.Println("Error converting the markdown ", err)
-	}
-	repoName = strings.Split(repoName, ".")[0]
-	// Use a template to wrap the rendered HTML
-	tmpl := `
-	<!DOCTYPE html>
-<html>
-<head>
-    <title>Documentation - {{.RepoName}}</title>
-    <meta charset="UTF-8">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            margin: 0;
-            padding: 0;
-            background-color: #121212; /* Deep dark background */
-            color: #e0e0e0; /* Light gray text for contrast */
-        }
-        .container {
-            max-width: 800px;
-            margin: auto;
-            padding: 20px;
-        }
-        h1 {
-            color: #bb86fc; /* Soft purple for headings */
-            border-bottom: 1px solid #373737; /* Subtle separator */
-            padding-bottom: 10px;
-        }
-        pre {
-            background-color: #1e1e1e; /* Slightly lighter than body for code blocks */
-            color: #e0e0e0; /* Light text color */
-            padding: 15px;
-            border-radius: 4px;
-            overflow-x: auto;
-            border: 1px solid #373737; /* Subtle border */
-        }
-        a {
-            color: #03dac6; /* Teal for links */
-            text-decoration: none;
-        }
-        a:hover {
-            text-decoration: underline;
-            color: #bb86fc; /* Same purple as headings for hover state */
-        }
-        /* Optional: Add scrollbar styling for dark mode */
-        ::-webkit-scrollbar {
-            width: 12px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #1e1e1e;
-        }
-        ::-webkit-scrollbar-thumb {
-            background-color: #555;
-            border-radius: 6px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background-color: #777;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Documentation for {{.RepoName}}</h1>
-        {{.Content}}
-    </div>
-</body>
-</html>`
-
-	t := template.Must(template.New("doc").Parse(tmpl))
-
-	data := struct {
-		RepoName string
-		Content  template.HTML
-	}{
-		RepoName: repoName,
-		Content:  template.HTML(buf.String()),
-	}
-
-	// Render the template
-	if err := t.Execute(w, data); err != nil {
-		http.Error(w, "Error rendering template: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
